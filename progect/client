@@ -1,0 +1,297 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import socket
+import json
+import base64
+from io import BytesIO
+from PIL import Image, ImageTk
+
+HOST = 'localhost'
+PORT = 20023
+
+class MathClient:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Математичний калькулятор (клієнт)")
+        self.create_widgets()
+
+    def create_widgets(self):
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=5, pady=5)
+
+        self.arith_frame = ttk.Frame(notebook)
+        notebook.add(self.arith_frame, text='Арифметика')
+        self.build_arithmetic_tab()
+
+        self.eq_frame = ttk.Frame(notebook)
+        notebook.add(self.eq_frame, text='Рівняння')
+        self.build_equation_tab()
+
+        self.plot_frame = ttk.Frame(notebook)
+        notebook.add(self.plot_frame, text='Графік')
+        self.build_plot_tab()
+
+        self.stat_frame = ttk.Frame(notebook)
+        notebook.add(self.stat_frame, text='Статистика')
+        self.build_statistics_tab()
+
+        self.opt_frame = ttk.Frame(notebook)
+        notebook.add(self.opt_frame, text='Оптимізація')
+        self.build_optimization_tab()
+
+        self.random_frame = ttk.Frame(notebook)
+        notebook.add(self.random_frame, text='Випадкова задача')
+        self.build_random_tab()
+
+    def send_request(self, payload):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((HOST, PORT))
+            s.sendall(json.dumps(payload).encode('utf-8'))
+            response = b''
+            while True:
+                part = s.recv(4096)
+                if not part:
+                    break
+                response += part
+                if len(part) < 4096:
+                    break
+            s.close()
+            return json.loads(response.decode('utf-8'))
+        except Exception as e:
+            messagebox.showerror("Помилка", str(e))
+            return None
+
+    def build_arithmetic_tab(self):
+        ttk.Label(self.arith_frame, text="Введіть вираз (наприклад, (2+3)*4):").pack(pady=5)
+        self.expr_entry = ttk.Entry(self.arith_frame, width=40)
+        self.expr_entry.pack(pady=5)
+        ttk.Button(self.arith_frame, text="Обчислити", command=self.do_arithmetic).pack(pady=5)
+        self.arith_result = tk.Text(self.arith_frame, height=2, width=40)
+        self.arith_result.pack(pady=5)
+
+    def do_arithmetic(self):
+        expr = self.expr_entry.get().strip()
+        if not expr:
+            return
+        res = self.send_request({"task": "arithmetic", "expression": expr})
+        if res and "result" in res:
+            self.arith_result.delete('1.0', tk.END)
+            self.arith_result.insert('1.0', str(res["result"]))
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+    def build_equation_tab(self):
+        eq_type = ttk.LabelFrame(self.eq_frame, text="Тип рівняння")
+        eq_type.pack(pady=5, fill='x', padx=5)
+        self.eq_var = tk.StringVar(value="linear")
+        ttk.Radiobutton(eq_type, text="Лінійне (ax + b = 0)", variable=self.eq_var, value="linear").pack(anchor='w')
+        ttk.Radiobutton(eq_type, text="Квадратне (ax^2 + bx + c = 0)", variable=self.eq_var, value="quadratic").pack(anchor='w')
+
+        coeffs = ttk.Frame(self.eq_frame)
+        coeffs.pack(pady=5)
+        ttk.Label(coeffs, text="a:").grid(row=0, column=0, padx=5)
+        self.eq_a = ttk.Entry(coeffs, width=10)
+        self.eq_a.grid(row=0, column=1, padx=5)
+        ttk.Label(coeffs, text="b:").grid(row=0, column=2, padx=5)
+        self.eq_b = ttk.Entry(coeffs, width=10)
+        self.eq_b.grid(row=0, column=3, padx=5)
+        ttk.Label(coeffs, text="c (для квадратного):").grid(row=0, column=4, padx=5)
+        self.eq_c = ttk.Entry(coeffs, width=10)
+        self.eq_c.grid(row=0, column=5, padx=5)
+
+        ttk.Button(self.eq_frame, text="Розв'язати", command=self.solve_equation).pack(pady=5)
+        self.eq_result = tk.Text(self.eq_frame, height=3, width=50)
+        self.eq_result.pack(pady=5)
+
+    def solve_equation(self):
+        try:
+            a = float(self.eq_a.get())
+            b = float(self.eq_b.get())
+        except:
+            messagebox.showerror("Помилка", "Невірні коефіцієнти")
+            return
+        if self.eq_var.get() == "linear":
+            payload = {"task": "linear", "a": a, "b": b}
+        else:
+            try:
+                c = float(self.eq_c.get())
+            except:
+                messagebox.showerror("Помилка", "Введіть c")
+                return
+            payload = {"task": "quadratic", "a": a, "b": b, "c": c}
+        res = self.send_request(payload)
+        if res and "result" in res:
+            self.eq_result.delete('1.0', tk.END)
+            self.eq_result.insert('1.0', res["result"])
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+    def build_plot_tab(self):
+        ttk.Label(self.plot_frame, text="Функція f(x):").pack(pady=2)
+        self.plot_func = ttk.Entry(self.plot_frame, width=40)
+        self.plot_func.pack(pady=2)
+        ttk.Label(self.plot_frame, text="Від:").pack()
+        frame = ttk.Frame(self.plot_frame)
+        frame.pack()
+        self.plot_xmin = ttk.Entry(frame, width=8)
+        self.plot_xmin.pack(side='left', padx=5)
+        self.plot_xmin.insert(0, "-10")
+        ttk.Label(frame, text="до:").pack(side='left')
+        self.plot_xmax = ttk.Entry(frame, width=8)
+        self.plot_xmax.pack(side='left', padx=5)
+        self.plot_xmax.insert(0, "10")
+        ttk.Button(self.plot_frame, text="Побудувати", command=self.build_plot).pack(pady=5)
+        self.plot_image_label = ttk.Label(self.plot_frame)
+        self.plot_image_label.pack()
+
+    def build_plot(self):
+        func = self.plot_func.get().strip()
+        try:
+            x_min = float(self.plot_xmin.get())
+            x_max = float(self.plot_xmax.get())
+        except:
+            messagebox.showerror("Помилка", "Невірний діапазон")
+            return
+        res = self.send_request({"task": "plot", "function": func, "x_min": x_min, "x_max": x_max})
+        if res and "image" in res:
+            img_data = base64.b64decode(res["image"])
+            img = Image.open(BytesIO(img_data))
+            img = img.resize((500, 350), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self.plot_image_label.config(image=photo)
+            self.plot_image_label.image = photo
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+    def build_statistics_tab(self):
+        ttk.Label(self.stat_frame, text="Введіть числа через кому:").pack(pady=5)
+        self.stat_entry = ttk.Entry(self.stat_frame, width=50)
+        self.stat_entry.pack(pady=5)
+        ttk.Button(self.stat_frame, text="Обчислити", command=self.calc_statistics).pack(pady=5)
+        self.stat_result = tk.Text(self.stat_frame, height=5, width=50)
+        self.stat_result.pack(pady=5)
+
+    def calc_statistics(self):
+        nums_str = self.stat_entry.get()
+        try:
+            nums = [float(x.strip()) for x in nums_str.split(',') if x.strip()]
+        except:
+            messagebox.showerror("Помилка", "Невірний формат чисел")
+            return
+        res = self.send_request({"task": "statistics", "numbers": nums})
+        if res and "result" in res:
+            self.stat_result.delete('1.0', tk.END)
+            self.stat_result.insert('1.0', json.dumps(res["result"], indent=2, ensure_ascii=False))
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+    def build_optimization_tab(self):
+        ttk.Label(self.opt_frame, text="Виберіть задачу:").pack()
+        self.opt_type = tk.StringVar(value="lp")
+        ttk.Radiobutton(self.opt_frame, text="Лінійне програмування (LP)", variable=self.opt_type, value="lp", command=self.toggle_opt_fields).pack(anchor='w')
+        ttk.Radiobutton(self.opt_frame, text="Метод найменших квадратів (LS)", variable=self.opt_type, value="ls", command=self.toggle_opt_fields).pack(anchor='w')
+
+        self.lp_frame = ttk.LabelFrame(self.opt_frame, text="Дані LP")
+        self.lp_frame.pack(pady=5, fill='x', padx=10)
+        ttk.Label(self.lp_frame, text="c (цільові коеф.) через кому:").pack()
+        self.lp_c = ttk.Entry(self.lp_frame, width=50)
+        self.lp_c.pack()
+        ttk.Label(self.lp_frame, text="A_ub (матриця обмежень, рядки через ; стовпці через кому):").pack()
+        self.lp_A = ttk.Entry(self.lp_frame, width=50)
+        self.lp_A.pack()
+        ttk.Label(self.lp_frame, text="b_ub (праві частини через кому):").pack()
+        self.lp_b = ttk.Entry(self.lp_frame, width=50)
+        self.lp_b.pack()
+
+        self.ls_frame = ttk.LabelFrame(self.opt_frame, text="Дані LS")
+        self.ls_frame.pack(pady=5, fill='x', padx=10)
+        ttk.Label(self.ls_frame, text="X (матриця ознак, рядки через ; стовпці через кому):").pack()
+        self.ls_X = ttk.Entry(self.ls_frame, width=50)
+        self.ls_X.pack()
+        ttk.Label(self.ls_frame, text="y (вектор відгуку, через кому):").pack()
+        self.ls_y = ttk.Entry(self.ls_frame, width=50)
+        self.ls_y.pack()
+        ttk.Button(self.ls_frame, text="Завантажити з файлу", command=self.load_ls_from_file).pack(pady=5)
+
+        ttk.Button(self.opt_frame, text="Розв'язати", command=self.solve_optimization).pack(pady=10)
+        self.opt_result = tk.Text(self.opt_frame, height=6, width=60)
+        self.opt_result.pack(pady=5)
+
+        self.toggle_opt_fields()
+
+    def toggle_opt_fields(self):
+        if self.opt_type.get() == "lp":
+            self.lp_frame.pack(pady=5, fill='x', padx=10)
+            self.ls_frame.pack_forget()
+        else:
+            self.lp_frame.pack_forget()
+            self.ls_frame.pack(pady=5, fill='x', padx=10)
+
+    def load_ls_from_file(self):
+        filepath = filedialog.askopenfilename(title="Виберіть CSV файл")
+        if not filepath:
+            return
+        try:
+            import csv
+            with open(filepath, newline='') as f:
+                reader = csv.reader(f)
+                data = list(reader)
+            X_rows = []
+            y_vals = []
+            for row in data:
+                if len(row) < 2:
+                    continue
+                y_vals.append(row[-1])
+                X_rows.append(row[:-1])
+            self.ls_X.delete(0, tk.END)
+            self.ls_X.insert(0, ';'.join([','.join(r) for r in X_rows]))
+            self.ls_y.delete(0, tk.END)
+            self.ls_y.insert(0, ','.join(y_vals))
+        except Exception as e:
+            messagebox.showerror("Помилка", f"Не вдалося прочитати файл: {e}")
+
+    def solve_optimization(self):
+        if self.opt_type.get() == "lp":
+            try:
+                c = [float(x) for x in self.lp_c.get().split(',')]
+                A_rows = [list(map(float, row.split(','))) for row in self.lp_A.get().split(';')]
+                b = [float(x) for x in self.lp_b.get().split(',')]
+                payload = {"task": "lp", "c": c, "A_ub": A_rows, "b_ub": b}
+            except:
+                messagebox.showerror("Помилка", "Невірний формат даних LP")
+                return
+        else:
+            try:
+                X_rows = [list(map(float, row.split(','))) for row in self.ls_X.get().split(';')]
+                y = [float(x) for x in self.ls_y.get().split(',')]
+                payload = {"task": "ls", "X": X_rows, "y": y}
+            except:
+                messagebox.showerror("Помилка", "Невірний формат даних LS")
+                return
+        res = self.send_request(payload)
+        if res and "result" in res:
+            self.opt_result.delete('1.0', tk.END)
+            self.opt_result.insert('1.0', json.dumps(res["result"], indent=2, ensure_ascii=False))
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+    def build_random_tab(self):
+        ttk.Label(self.random_frame, text="Натисніть кнопку, щоб отримати випадкову задачу:").pack(pady=10)
+        ttk.Button(self.random_frame, text="Отримати задачу", command=self.get_random_task).pack(pady=5)
+        self.random_task_text = tk.Text(self.random_frame, height=6, width=70)
+        self.random_task_text.pack(pady=10)
+
+    def get_random_task(self):
+        res = self.send_request({"task": "random_task"})
+        if res and "task_text" in res:
+            self.random_task_text.delete('1.0', tk.END)
+            self.random_task_text.insert('1.0', res["task_text"])
+        elif res and "error" in res:
+            messagebox.showerror("Помилка", res["error"])
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.geometry("700x600")
+    app = MathClient(root)
+    root.mainloop()
