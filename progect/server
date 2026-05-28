@@ -1,0 +1,202 @@
+import socket
+import json
+import io
+import base64
+import random
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from scipy.optimize import linprog
+from collections import Counter
+
+HOST = ''
+PORT = 20023
+
+
+
+TASK_LIST = [
+    "Довести, що метричний простір є компактним тоді і тільки тоді коли будь-який "
+    "набір замкнених множин в цьому просторі має непустий перетин, за умови що "
+    "будь-який скінченний піднабір має непустий перетин.",
+
+    "Довести, що замкнена підмножина компактного метричного простору є компактною множиною.",
+
+    "Довести, що компактна множина в метричному просторі є замкненою множиною.",
+
+    "Довести, що метричний простір є сепарабельним тоді і тільки тоді коли будь-яке "
+    "його покриття відкритими множинами містить зліченне підпокриття.",
+
+    "Довести, що будь-яка послідовність елементів множини A в метричному просторі "
+    "містить фундаментальну послідовність тоді і тільки тоді коли при кожному ε існує "
+    "скінченна ε-сітка для A.",
+
+    "Довести, що метричний простір (X, ρ) є сепарабельним тоді і тільки тоді коли в "
+    "ньому існує зліченна ε-сітка, тобто для будь-якого ε існує послідовність {xn}, така "
+    "що для кожного y ∈ X існує таке k, що ρ(xk, y) < ε.",
+
+    "Дослідити на сепарабельність простір l∞ всіх обмежених послідовностей з метрикою "
+    "ρ(x, y) = sup |xk − yk|, k=1,2,...",
+
+    "Дослідити на сепарабельність простір c всіх збіжних послідовностей з метрикою "
+    "ρ(x, y) = sup |xk − yk|, k=1,2,...",
+
+    "Нехай для α > 0: Γ(α) = ∫₀^∞ t^(α−1) e^(−t) dt. Довести, що "
+    "Γ(α) = lim_{n→+∞} ∫₀^n t^(α−1) (1 − t/n)^n dt.",
+
+    "Нехай для α > 0: Γ(α) = ∫₀^∞ t^(α−1) e^(−t) dt. Довести, що "
+    "Γ(α) = lim_{n→+∞} n^(α−1) n! / [α(α+1)...(α+n−1)].",
+
+    "Довести, що sin πx = πx ∏_{n=1}^∞ (1 − x²/n²).",
+
+    "Знайти ∫₀¹ ln Γ(x) dx.",
+
+    "Показати, що на сфері не можна ввести атлас, що складається з однієї карти. "
+    "Вказівка. Якщо існує такий атлас, то карта задає гомеоморфізм сфери на відкриту "
+    "множину площини. Скористайтесь теоремою про неперервний образ компактного "
+    "простору, щоб показати, що це неможливо.",
+
+    "Довести, що кожний многовид є локально-компактним простором (кожна точка має "
+    "окіл, замикання якого компактне). Вказівка. Скориставшись довільною картою звести "
+    "задачу до побудови такого околу в евклідовому просторі і навести приклад такого околу.",
+
+    "Довести, що (компактний) многовид зв'язний тоді і тільки тоді, коли він лінійно-зв'язний. "
+    "Вказівка. Скористайтесь тим, що для компактного многовиду існує скінченний атлас, "
+    "кожна з карт якого гомеоморфна евклідовому простору, в якому довільні дві точки "
+    "можна з'єднати відрізком прямої."
+]
+
+
+def safe_eval(expr):
+    allowed = set('0123456789+-*/(). ')
+    if not all(c in allowed for c in expr):
+        raise ValueError("Недозволені символи")
+    return eval(expr)
+
+def solve_linear(a, b):
+    if a == 0:
+        raise ValueError("a не може бути 0")
+    return -b / a
+
+def solve_quadratic(a, b, c):
+    if a == 0:
+        raise ValueError("a не може бути 0")
+    D = b**2 - 4*a*c
+    if D < 0:
+        return "Дійсних коренів немає"
+    x1 = (-b + np.sqrt(D)) / (2*a)
+    x2 = (-b - np.sqrt(D)) / (2*a)
+    if D == 0:
+        return f"x = {x1:.4f}"
+    return f"x1 = {x1:.4f}, x2 = {x2:.4f}"
+
+def compute_statistics(numbers):
+    arr = np.array(numbers, dtype=float)
+    mean = np.mean(arr)
+    median = np.median(arr)
+    counts = Counter(arr)
+    max_count = max(counts.values())
+    modes = [k for k, v in counts.items() if v == max_count]
+    mode = modes if len(modes) > 1 or max_count == 1 else modes[0]
+    return {"mean": round(mean, 4), "median": round(median, 4), "mode": mode}
+
+def generate_plot(func_str, x_min, x_max):
+    x = np.linspace(x_min, x_max, 400)
+    safe_dict = {"x": x, "sin": np.sin, "cos": np.cos, "exp": np.exp, "log": np.log, "sqrt": np.sqrt, "pi": np.pi, "e": np.e}
+    try:
+        y = eval(func_str, {"__builtins__": None}, safe_dict)
+    except Exception as e:
+        raise ValueError(f"Помилка обчислення функції: {e}")
+    plt.figure()
+    plt.plot(x, y)
+    plt.grid(True)
+    plt.title(f"Графік: {func_str}")
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
+
+def linear_programming(c, A_ub, b_ub):
+    c = np.array(c, dtype=float)
+    A_ub = np.array(A_ub, dtype=float)
+    b_ub = np.array(b_ub, dtype=float)
+    res = linprog(-c, A_ub=A_ub, b_ub=b_ub, bounds=(0, None), method='highs')
+    if not res.success:
+        raise ValueError("Оптимальне рішення не знайдено")
+    return {"x": [round(xi, 4) for xi in res.x], "z": round(-res.fun, 4)}
+
+def least_squares(X, y):
+    X = np.array(X, dtype=float)
+    y = np.array(y, dtype=float)
+    coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
+    return [round(c, 6) for c in coeffs]
+
+def process_request(data):
+    try:
+        req = json.loads(data)
+    except:
+        return json.dumps({"error": "Невірний JSON"})
+    task = req.get("task")
+    try:
+        if task == "arithmetic":
+            expr = req["expression"]
+            result = safe_eval(expr)
+            return json.dumps({"result": round(result, 6)})
+        elif task == "linear":
+            a = float(req["a"])
+            b = float(req["b"])
+            sol = solve_linear(a, b)
+            return json.dumps({"result": f"x = {sol:.4f}"})
+        elif task == "quadratic":
+            a = float(req["a"])
+            b = float(req["b"])
+            c = float(req["c"])
+            sol = solve_quadratic(a, b, c)
+            return json.dumps({"result": sol})
+        elif task == "statistics":
+            numbers = req["numbers"]
+            stats = compute_statistics(numbers)
+            return json.dumps({"result": stats})
+        elif task == "plot":
+            func = req["function"]
+            x_min = float(req["x_min"])
+            x_max = float(req["x_max"])
+            img_b64 = generate_plot(func, x_min, x_max)
+            return json.dumps({"image": img_b64})
+        elif task == "lp":
+            c = req["c"]
+            A_ub = req["A_ub"]
+            b_ub = req["b_ub"]
+            sol = linear_programming(c, A_ub, b_ub)
+            return json.dumps({"result": sol})
+        elif task == "ls":
+            X = req["X"]
+            y = req["y"]
+            coeffs = least_squares(X, y)
+            return json.dumps({"result": coeffs})
+        elif task == "random_task":
+            return json.dumps({"task_text": random.choice(TASK_LIST)})
+        else:
+            return json.dumps({"error": "Невідоме завдання"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind((HOST, PORT))
+s.listen(5)
+print("Математичний сервер запущено...")
+while True:
+    conn, addr = s.accept()
+    with conn:
+        data = b''
+        while True:
+            part = conn.recv(4096)
+            if not part:
+                break
+            data += part
+            if len(part) < 4096:
+                break
+        if data:
+            response = process_request(data.decode('utf-8'))
+            conn.sendall(response.encode('utf-8'))
